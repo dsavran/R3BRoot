@@ -1619,7 +1619,12 @@ void R3BOnlineSpectra::FinishTask()
     fh_los_channels->Write();
     fh_los_tot->Write();
   }
-
+  if(fCalItems.at(DET_TOFD))
+  {
+      for(Int_t i; i<4;i++){
+         fh_tofd_TotPm[i]->Write();
+      }
+  }    
   for(Int_t ifibcount = 0; ifibcount < NOF_FIB_DET; ifibcount++) {	
     if(fMappedItems.at(ifibcount + DET_FI_FIRST)) 
     {
@@ -1631,7 +1636,7 @@ void R3BOnlineSpectra::FinishTask()
       fh_multihit_s_Fib[ifibcount]->Write();
       fh_ToT_m_Fib[ifibcount]->Write();
       fh_ToT_s_Fib[ifibcount]->Write();
-
+      
     }
   }   		 
  
