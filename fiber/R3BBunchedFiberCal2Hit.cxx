@@ -6,6 +6,14 @@
 #include "R3BBunchedFiberCalData.h"
 #include "R3BBunchedFiberHitData.h"
 
+R3BBunchedFiberCal2Hit::ToT::ToT(R3BBunchedFiberCalData const *a_lead,
+    R3BBunchedFiberCalData const *a_trail, Double_t a_tot)
+  : lead(a_lead)
+  , trail(a_trail)
+  , tot(a_tot)
+{
+}
+
 R3BBunchedFiberCal2Hit::R3BBunchedFiberCal2Hit(const char *a_name, Int_t
     a_verbose, Direction a_direction, UInt_t a_sub_num, UInt_t a_mapmt_per_sub,
     UInt_t a_spmt_per_sub)
@@ -54,80 +62,100 @@ InitStatus R3BBunchedFiberCal2Hit::ReInit()
 
 void R3BBunchedFiberCal2Hit::Exec(Option_t *option)
 {
-  // Find largest peak (max ToT) in every electronics channel, then combine
-  // the channels to create fibers.
   for (auto side_i = 0; side_i < 2; ++side_i) {
+    // Clear local helper containers.
     auto &array = fChannelArray[side_i];
     for (auto it = array.begin(); array.end() != it; ++it) {
-      it->prev = nullptr;
-      it->max_ToT = -1;
+      it->lead_list.clear();
+      it->tot_list.clear();
     }
   }
+
   auto const c_period = 4096e3 / CLOCK_TDC_MHZ;
-  auto cal_num = fCalItems->GetEntriesFast();
+  size_t cal_num = fCalItems->GetEntriesFast();
+
+  // Find multi-hit ToT for every channel.
+  // The easiest safe way to survive ugly cases is to record all
+  // leading edges per channel, and then pair up with whatever
+  // trailing we have.
+  // Not super efficient, but shouldn't crash if the data is not
+  // perfect.
+  unsigned n_lead = 0;
+  unsigned n_trail = 0;
   for (size_t j = 0; j < cal_num; ++j) {
     auto cur_cal = (R3BBunchedFiberCalData const *)fCalItems->At(j);
-
-    auto side_i = cur_cal->IsMAPMT() ? 0 : 1;
-    auto channel = &fChannelArray[side_i].at(cur_cal->GetChannel() - 1);
-    auto prev_cal = channel->prev;
-    if (prev_cal &&
-        prev_cal->IsLeading() && cur_cal->IsTrailing()) {
-      auto ToT = fmod(cur_cal->GetTime_ns() - prev_cal->GetTime_ns() + c_period, c_period);
-      if (ToT > channel->max_ToT) {
-        // We're only interested in the largest signals (so far).
-        channel->max_ToT = ToT;
-        channel->max_leading = prev_cal;
-        channel->max_trailing = cur_cal;
-      }
+    if (cur_cal->IsLeading()) {
+	  ++n_lead;
+      auto side_i = cur_cal->IsMAPMT() ? 0 : 1;
+	  auto ch_i = cur_cal->GetChannel();
+	  auto &channel = fChannelArray[side_i].at(ch_i - 1);
+	  channel.lead_list.push_back(cur_cal);
+    } else {
+	  ++n_trail;
+	}
+  }
+  if (n_lead != n_trail) {
+	  return;
+  }
+  for (size_t j = 0; j < cal_num; ++j) {
+    auto cur_cal = (R3BBunchedFiberCalData const *)fCalItems->At(j);
+    if (cur_cal->IsTrailing()) {
+	  auto side_i = cur_cal->IsMAPMT() ? 0 : 1;
+	  auto ch_i = cur_cal->GetChannel();
+      auto &channel = fChannelArray[side_i].at(ch_i - 1);
+      if (channel.lead_list.empty()) {
+		break;
+	  }
+      auto lead = channel.lead_list.front();
+      channel.lead_list.pop_front();
+      auto tot = fmod(cur_cal->GetTime_ns() - lead->GetTime_ns() + c_period, c_period);
+      channel.tot_list.push_back(ToT(lead, cur_cal, tot));
     }
-    channel->prev = cur_cal;
   }
 
-  for (UInt_t sub_i = 0; sub_i < fSubNum; ++sub_i) {
-    auto const &mapmt_array = fChannelArray[0];
-    auto const &spmt_array = fChannelArray[1];
-
-    for (auto it_mapmt = mapmt_array.begin(); mapmt_array.end() != it_mapmt; ++it_mapmt) {
-      auto const &mapmt = *it_mapmt;
-      if (0 > mapmt.max_ToT) {
-        continue;
-      }
+  // Make every permutation to create fibers.
+  // TODO: Some combinations can probably be excluded, don't know yet how.
+  auto const &mapmt_array = fChannelArray[0];
+  auto const &spmt_array = fChannelArray[1];
+  for (auto it_mapmt = mapmt_array.begin(); mapmt_array.end() != it_mapmt;
+      ++it_mapmt) {
+    auto const &mapmt = *it_mapmt;
+    for (auto it_mapmt_tot = mapmt.tot_list.begin(); mapmt.tot_list.end() !=
+        it_mapmt_tot; ++it_mapmt_tot) {
+      auto const &mapmt_tot = *it_mapmt_tot;
       for (auto it_spmt = spmt_array.begin(); spmt_array.end() != it_spmt; ++it_spmt) {
         auto const &spmt = *it_spmt;
-        if (0 > spmt.max_ToT) {
-          continue;
-        }
+        for (auto it_spmt_tot = spmt.tot_list.begin(); spmt.tot_list.end() !=
+            it_spmt_tot; ++it_spmt_tot) {
+          auto const &spmt_tot = *it_spmt_tot;
 
-        // We now have a good MAPMT hit, save a fiber!
+          /*
+           * How to get a fiber ID for a fiber detector defined as:
+           *  SubNum = 2
+           *  MAPMT = 256
+           *  SPMT = 2
+           * This means we'll receive 512 MAPMT channels as 1..512, and 4 SPMT
+           * channels, but the first half (sub-detector) is completely
+           * decoupled from the second half. The sequence of all fibers in
+           * order is then, as (MAPMT,SPMT)-pairs:
+           *  (1,1), (1,2), (2,1), ... (256,1), (256,2),
+           *  (257,3), (257,4), (258,3), ... (512,3), (512,4)
+           */
+          auto fiber_id = (mapmt_tot.lead->GetChannel() - 1) * fChPerSub[1] +
+            (spmt_tot.lead->GetChannel() % fChPerSub[1]);
 
-	/*
-	 * How to get a fiber ID for a fiber detector defined as:
-	 *  SubNum = 2
-	 *  MAPMT = 256
-	 *  SPMT = 2
-	 * This means we'll receive 512 MAPMT channels as 1..512, and 4 SPMT
-	 * channels, but the first half (sub-detector) are completely decoupled
-	 * from the second half. The sequence of all fibers in order is then,
-	 * as (MAPMT,SPMT)-pairs:
-	 *  (1,1), (1,2), (2,1), ... (256,1), (256,2),
-	 *  (257,3), (257,4), (258,3), ... (512,3), (512,4)
-	 */
-        auto fiber_id = (mapmt.max_leading->GetChannel() - 1) * fChPerSub[1] +
-            (spmt.max_leading->GetChannel() % fChPerSub[1]);
+          // TODO: Use it_sub->direction to find real life coordinates.
 
-        // TODO: Use it_sub->direction to find real life coordinates.
+          // Fix fiber installation mistakes.
+          fiber_id = FixMistake(fiber_id);
 
-        // Fix fiber installation mistakes.
-        fiber_id = FixMistake(fiber_id);
-
-        new ((*fHitItems)[fNofHitItems++])
+          new ((*fHitItems)[fNofHitItems++])
             R3BBunchedFiberHitData(fiber_id,
-                mapmt.max_leading->GetTime_ns(),
-                spmt.max_leading->GetTime_ns(),
-                mapmt.max_ToT,
-                spmt.max_ToT,
-                sqrt(mapmt.max_ToT*spmt.max_ToT));
+                mapmt_tot.lead->GetTime_ns(),
+                spmt_tot.lead->GetTime_ns(),
+                mapmt_tot.tot,
+                spmt_tot.tot);
+        }
       }
     }
   }

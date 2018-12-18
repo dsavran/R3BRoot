@@ -15,8 +15,8 @@ class R3BBunchedFiberCalData;
  * mapped as:
  *  FIB4_MAPMT1 .. FIB4_MAPMT512
  *  FIB4_SPMT1 .. FIB4_SPMT4
- * This class will then figure out how map to the actual fibers (except for
- * non-ambiguous dorting errors).
+ * This class will then figure out how to map the actual fibers (except for
+ * non-ambiguous sorting errors).
  */
 class R3BBunchedFiberCal2Hit: public FairTask
 {
@@ -25,11 +25,16 @@ class R3BBunchedFiberCal2Hit: public FairTask
       HORIZONTAL,
       VERTICAL
     };
+    struct ToT {
+      ToT(R3BBunchedFiberCalData const *, R3BBunchedFiberCalData const *,
+          Double_t);
+      R3BBunchedFiberCalData const *lead;
+      R3BBunchedFiberCalData const *trail;
+      Double_t tot;
+    };
     struct Channel {
-      R3BBunchedFiberCalData const *prev;
-      double max_ToT;
-      R3BBunchedFiberCalData const *max_leading;
-      R3BBunchedFiberCalData const *max_trailing;
+      std::list<R3BBunchedFiberCalData const *> lead_list;
+      std::list<ToT> tot_list;
     };
 
     /**

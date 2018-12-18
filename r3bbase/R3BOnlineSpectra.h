@@ -104,6 +104,7 @@ class R3BOnlineSpectra : public FairTask
     void Reset_LOS_Histo();
     void Reset_SCI8_Histo();
     void Reset_TOFD_Histo();
+    void Reset_FIBERS_Histo();
  
   private:
     std::vector<TClonesArray *> fMappedItems;
@@ -217,6 +218,8 @@ class R3BOnlineSpectra : public FairTask
     TH2F *fh_los_multihitVFTX;
     TH2F *fh_los_multihitLEAD;
     TH2F *fh_los_multihitTRAI;
+    TH2F *fh_los_pos_MCFD;
+    TH2F *fh_los_pos_TAMEX;
     TH2F *fh_los_pos;
     
     TH1F *fh_channels_Fib[NOF_FIB_DET];
@@ -229,6 +232,7 @@ class R3BOnlineSpectra : public FairTask
     TH2F *fh_multihit_s_Fib[NOF_FIB_DET];
     TH2F *fh_ToT_m_Fib[NOF_FIB_DET];
     TH2F *fh_ToT_s_Fib[NOF_FIB_DET];
+    TH2F *fh_Fib_vs_Events[NOF_FIB_DET];
     
     
     TH1F *fh_tofd_channels[N_PLANE_MAX_TOFD];   
